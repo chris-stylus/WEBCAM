@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>ESP32 Cloud CCTV</title>
+    <title>ESP32 Point & Shoot</title>
     
     <!-- React & Tailwind -->
     <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
@@ -18,16 +18,16 @@
         import { getDatabase, ref, set, onValue } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-database.js";
         import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-auth.js";
 
-        // --- PASTE YOUR FIREBASE CONFIG HERE ---
-       const firebaseConfig = {
-        apiKey: "AIzaSyCx6BCyKA9FQ6cprrarImZKf9wHFBkJ7qs",
-        authDomain: "web-cam-8ea0e.firebaseapp.com",
-        databaseURL: "https://web-cam-8ea0e-default-rtdb.firebaseio.com",
-        projectId: "web-cam-8ea0e",
-        storageBucket: "web-cam-8ea0e.firebasestorage.app",
-        messagingSenderId: "791818890690",
-        appId: "1:791818890690:web:ce2bf048d6fcd721377a5b",
-        measurementId: "G-W0YVZ7YDVY"
+        // --- YOUR CREDENTIALS ---
+        const firebaseConfig = {
+            apiKey: "AIzaSyCx6BCyKA9FQ6cprrarImZKf9wHFBkJ7qs",
+            authDomain: "web-cam-8ea0e.firebaseapp.com",
+            databaseURL: "https://web-cam-8ea0e-default-rtdb.firebaseio.com",
+            projectId: "web-cam-8ea0e",
+            storageBucket: "web-cam-8ea0e.firebasestorage.app",
+            messagingSenderId: "791818890690",
+            appId: "1:791818890690:web:ce2bf048d6fcd721377a5b",
+            measurementId: "G-W0YVZ7YDVY"
         };
 
         const app = initializeApp(firebaseConfig);
@@ -37,7 +37,6 @@
         // Expose to window for React
         window.db = db;
         window.auth = auth;
-        // Added 'auth' here so destructuring works in the component
         window.firebaseRefs = { auth, ref, set, onValue, signInAnonymously, onAuthStateChanged };
     </script>
 </head>
@@ -53,27 +52,25 @@
             const [isFlashOn, setIsFlashOn] = useState(false);
             const [status, setStatus] = useState("Connecting to cloud...");
             const [streamUrl, setStreamUrl] = useState("");
+            
+            // Capture States
+            const [isCapturing, setIsCapturing] = useState(false);
+            const [capturedImage, setCapturedImage] = useState(null);
 
             useEffect(() => {
-                // Wait for firebase to init if module is slow
                 const initInterval = setInterval(() => {
                     if (window.firebaseRefs) {
                         clearInterval(initInterval);
                         initializeFirebase();
                     }
                 }, 100);
-                
                 return () => clearInterval(initInterval);
             }, []);
 
             const initializeFirebase = () => {
                 const { auth, signInAnonymously, onAuthStateChanged } = window.firebaseRefs;
 
-                // Guard against auth not being ready
-                if (!auth) {
-                    console.error("Firebase Auth not initialized");
-                    return;
-                }
+                if (!auth) return;
 
                 const unsubscribe = onAuthStateChanged(auth, (u) => {
                     if (u) {
@@ -94,8 +91,6 @@
                 if (!db || !firebaseRefs) return;
 
                 const { ref, onValue } = firebaseRefs;
-                
-                // Listen to Flash State
                 const flashRef = ref(db, 'cctv/flash');
                 onValue(flashRef, (snapshot) => {
                     setIsFlashOn(!!snapshot.val());
@@ -116,8 +111,40 @@
 
             const startStream = () => {
                 if(!camIP) return alert("Please enter IP Address");
-                // Construct stream URL
                 setStreamUrl(`http://${camIP}:80/stream`);
+            };
+
+            // --- NEW: CAPTURE LOGIC ---
+            const handleCapture = async () => {
+                if (!camIP) return alert("Connect to camera first");
+                setIsCapturing(true);
+
+                try {
+                    // 1. Fetch from ESP32 /capture endpoint
+                    const response = await fetch(`http://${camIP}/capture`);
+                    if (!response.ok) throw new Error("Capture failed");
+                    
+                    // 2. Create blob URL
+                    const blob = await response.blob();
+                    const imageUrl = URL.createObjectURL(blob);
+                    
+                    // 3. Show Modal
+                    setCapturedImage(imageUrl);
+                } catch (error) {
+                    alert("Capture Failed! Make sure:\n1. You are on the same WiFi\n2. If using GitHub Pages, allow 'Insecure Content' in browser settings.");
+                    console.error(error);
+                } finally {
+                    setIsCapturing(false);
+                }
+            };
+
+            const downloadImage = () => {
+                const link = document.createElement('a');
+                link.href = capturedImage;
+                link.download = `esp32-snap-${Date.now()}.jpg`;
+                document.body.appendChild(link);
+                link.click();
+                document.body.removeChild(link);
             };
 
             if (!user) {
@@ -130,12 +157,12 @@
             }
 
             return (
-                <div className="min-h-screen max-w-md mx-auto bg-gray-800 shadow-2xl overflow-hidden md:max-w-2xl">
+                <div className="min-h-screen max-w-md mx-auto bg-gray-800 shadow-2xl overflow-hidden md:max-w-2xl relative">
                     {/* Header */}
-                    <div className="bg-blue-600 p-4 flex justify-between items-center shadow-lg">
+                    <div className="bg-blue-600 p-4 flex justify-between items-center shadow-lg z-10 relative">
                         <div className="flex items-center gap-3">
-                            <i className="fa-solid fa-video text-2xl"></i>
-                            <h1 className="text-xl font-bold">ESP32 Secure View</h1>
+                            <i className="fa-solid fa-camera text-2xl"></i>
+                            <h1 className="text-xl font-bold">Point & Shoot</h1>
                         </div>
                         <div className="flex items-center gap-2">
                             <span className="w-2 h-2 bg-green-400 rounded-full animate-pulse"></span>
@@ -143,16 +170,13 @@
                         </div>
                     </div>
 
-                    {/* Video Viewport */}
-                    <div className="relative bg-black aspect-video flex items-center justify-center overflow-hidden group">
+                    {/* Viewfinder */}
+                    <div className="relative bg-black aspect-[4/3] flex items-center justify-center overflow-hidden group">
                         {streamUrl ? (
                             <img 
                                 src={streamUrl} 
                                 className="w-full h-full object-cover"
-                                onError={(e) => {
-                                    // Don't hide completely, just show warning, so user can retry
-                                    console.log("Stream error - likely mixed content or offline");
-                                }}
+                                onError={(e) => console.log("Stream offline")}
                             />
                         ) : (
                             <div className="text-gray-500 flex flex-col items-center">
@@ -161,64 +185,86 @@
                             </div>
                         )}
                         
-                        {/* Overlay Controls */}
-                        <div className="absolute top-4 right-4 flex gap-2">
-                            <div className="bg-black/50 backdrop-blur px-2 py-1 rounded text-xs border border-white/20">
-                                LIVE
-                            </div>
-                        </div>
+                        {/* Flash Effect Overlay */}
+                        {isCapturing && (
+                            <div className="absolute inset-0 bg-white animate-pulse z-20 opacity-90"></div>
+                        )}
                     </div>
 
-                    {/* Controls Config */}
-                    <div className="p-6 space-y-6">
+                    {/* Controls */}
+                    <div className="p-6 space-y-6 pb-24">
                         
-                        {/* Connection Card */}
+                        {/* Connection Bar */}
                         <div className="bg-gray-700/50 p-4 rounded-xl border border-gray-600">
-                            <label className="text-xs text-gray-400 uppercase font-bold tracking-wider mb-2 block">
-                                Camera Connection
-                            </label>
                             <div className="flex gap-2">
                                 <input 
                                     type="text" 
                                     value={camIP}
                                     onChange={handleIpChange}
-                                    placeholder="e.g. 192.168.1.50"
+                                    placeholder="Camera IP (e.g. 192.168.1.50)"
                                     className="flex-1 bg-gray-800 border-gray-600 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none"
                                 />
-                                <button 
-                                    onClick={startStream}
-                                    className="bg-blue-500 hover:bg-blue-600 px-4 py-2 rounded-lg text-sm font-semibold transition-colors"
-                                >
-                                    Connect
+                                <button onClick={startStream} className="bg-blue-500 text-white px-4 rounded-lg">
+                                    <i className="fa-solid fa-link"></i>
                                 </button>
                             </div>
-                            <p className="text-[10px] text-gray-400 mt-2">
-                                * Find IP in Arduino Serial Monitor. For remote access, use Port Forwarding or Ngrok.
-                            </p>
                         </div>
 
-                        {/* Hardware Controls */}
+                        {/* Big Buttons */}
                         <div className="grid grid-cols-2 gap-4">
                             <button 
                                 onClick={toggleFlash}
-                                className={`p-4 rounded-xl flex flex-col items-center justify-center gap-2 transition-all duration-200 border ${
+                                className={`p-4 rounded-xl flex flex-col items-center gap-2 border ${
                                     isFlashOn 
                                     ? 'bg-yellow-500/20 border-yellow-500 text-yellow-500' 
-                                    : 'bg-gray-700 border-gray-600 text-gray-400 hover:bg-gray-600'
+                                    : 'bg-gray-700 border-gray-600 text-gray-400'
                                 }`}
                             >
-                                <i className={`fa-solid fa-lightbulb text-2xl ${isFlashOn ? 'animate-pulse' : ''}`}></i>
-                                <span className="font-medium">Flashlight</span>
+                                <i className="fa-solid fa-bolt text-2xl"></i>
+                                <span className="font-medium">Torch</span>
                             </button>
 
                             <button 
-                                className="p-4 rounded-xl flex flex-col items-center justify-center gap-2 bg-gray-700 border border-gray-600 text-gray-400 cursor-not-allowed opacity-50"
+                                onClick={handleCapture}
+                                disabled={isCapturing}
+                                className="p-4 rounded-xl flex flex-col items-center gap-2 bg-white text-gray-900 border border-white hover:bg-gray-200 transition-colors active:scale-95"
                             >
-                                <i className="fa-solid fa-record-vinyl text-2xl"></i>
-                                <span className="font-medium">Record (Pro)</span>
+                                <i className="fa-solid fa-camera-retro text-2xl"></i>
+                                <span className="font-bold">{isCapturing ? '...' : 'CAPTURE'}</span>
                             </button>
                         </div>
                     </div>
+
+                    {/* Photo Preview Modal */}
+                    {capturedImage && (
+                        <div className="fixed inset-0 z-50 bg-black/90 flex items-center justify-center p-4 backdrop-blur-sm">
+                            <div className="bg-gray-800 rounded-2xl max-w-lg w-full overflow-hidden shadow-2xl border border-gray-700">
+                                <div className="p-4 border-b border-gray-700 flex justify-between items-center">
+                                    <h3 className="font-bold">Captured Photo</h3>
+                                    <button onClick={() => setCapturedImage(null)} className="text-gray-400 hover:text-white">
+                                        <i className="fa-solid fa-xmark text-xl"></i>
+                                    </button>
+                                </div>
+                                <div className="aspect-[4/3] bg-black">
+                                    <img src={capturedImage} className="w-full h-full object-contain" />
+                                </div>
+                                <div className="p-4 flex gap-3">
+                                    <button 
+                                        onClick={downloadImage}
+                                        className="flex-1 bg-blue-600 hover:bg-blue-700 text-white py-3 rounded-xl font-bold flex items-center justify-center gap-2"
+                                    >
+                                        <i className="fa-solid fa-download"></i> Download
+                                    </button>
+                                    <button 
+                                        onClick={() => setCapturedImage(null)}
+                                        className="px-4 py-3 rounded-xl border border-gray-600 text-gray-300 hover:bg-gray-700"
+                                    >
+                                        Close
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    )}
                 </div>
             );
         }
