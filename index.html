@@ -114,28 +114,45 @@
                 setStreamUrl(`http://${camIP}:80/stream`);
             };
 
-            // --- NEW: CAPTURE LOGIC ---
-            const handleCapture = async () => {
+            // --- UPDATED: ROBUST CAPTURE LOGIC ---
+            // Uses standard Image loading instead of fetch to bypass some browser security restrictions
+            const handleCapture = () => {
                 if (!camIP) return alert("Connect to camera first");
                 setIsCapturing(true);
 
-                try {
-                    // 1. Fetch from ESP32 /capture endpoint
-                    const response = await fetch(`http://${camIP}/capture`);
-                    if (!response.ok) throw new Error("Capture failed");
-                    
-                    // 2. Create blob URL
-                    const blob = await response.blob();
-                    const imageUrl = URL.createObjectURL(blob);
-                    
-                    // 3. Show Modal
-                    setCapturedImage(imageUrl);
-                } catch (error) {
-                    alert("Capture Failed! Make sure:\n1. You are on the same WiFi\n2. If using GitHub Pages, allow 'Insecure Content' in browser settings.");
-                    console.error(error);
-                } finally {
+                // Create a temporary image object
+                const img = new Image();
+                // Add timestamp to prevent browser caching the old image
+                const captureUrl = `http://${camIP}/capture?t=${Date.now()}`;
+                
+                img.crossOrigin = "Anonymous"; // Requests access to the image data
+                img.src = captureUrl;
+
+                img.onload = () => {
+                    // Draw the loaded image to a hidden canvas
+                    // This creates a clean base64 string we can display and download
+                    const canvas = document.createElement('canvas');
+                    canvas.width = img.width;
+                    canvas.height = img.height;
+                    const ctx = canvas.getContext('2d');
+                    ctx.drawImage(img, 0, 0);
+
+                    try {
+                        const dataUrl = canvas.toDataURL('image/jpeg');
+                        setCapturedImage(dataUrl);
+                    } catch (e) {
+                        // Fallback if CORS headers are missing on ESP32
+                        console.warn("Canvas tainted, using direct URL");
+                        setCapturedImage(captureUrl);
+                    }
                     setIsCapturing(false);
-                }
+                };
+
+                img.onerror = (e) => {
+                    console.error("Image load error", e);
+                    alert("Capture Failed!\n\nIf the Stream is working but Capture fails:\n1. Check if 'Insecure Content' is allowed in site settings.\n2. Ensure the ESP32 code was uploaded with the latest version.");
+                    setIsCapturing(false);
+                };
             };
 
             const downloadImage = () => {
