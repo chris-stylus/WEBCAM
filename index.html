@@ -1,0 +1,230 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ESP32 Cloud CCTV</title>
+    
+    <!-- React & Tailwind -->
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    
+    <!-- Firebase SDKs -->
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
+        import { getDatabase, ref, set, onValue } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-database.js";
+        import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-auth.js";
+
+        // --- PASTE YOUR FIREBASE CONFIG HERE ---
+       const firebaseConfig = {
+        apiKey: "AIzaSyCx6BCyKA9FQ6cprrarImZKf9wHFBkJ7qs",
+        authDomain: "web-cam-8ea0e.firebaseapp.com",
+        databaseURL: "https://web-cam-8ea0e-default-rtdb.firebaseio.com",
+        projectId: "web-cam-8ea0e",
+        storageBucket: "web-cam-8ea0e.firebasestorage.app",
+        messagingSenderId: "791818890690",
+        appId: "1:791818890690:web:ce2bf048d6fcd721377a5b",
+        measurementId: "G-W0YVZ7YDVY"
+        };
+
+        const app = initializeApp(firebaseConfig);
+        const auth = getAuth(app);
+        const db = getDatabase(app);
+        
+        // Expose to window for React
+        window.db = db;
+        window.auth = auth;
+        // Added 'auth' here so destructuring works in the component
+        window.firebaseRefs = { auth, ref, set, onValue, signInAnonymously, onAuthStateChanged };
+    </script>
+</head>
+<body class="bg-gray-900 text-white font-sans">
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect } = React;
+
+        function App() {
+            const [user, setUser] = useState(null);
+            const [camIP, setCamIP] = useState(localStorage.getItem('camIP') || '');
+            const [isFlashOn, setIsFlashOn] = useState(false);
+            const [status, setStatus] = useState("Connecting to cloud...");
+            const [streamUrl, setStreamUrl] = useState("");
+
+            useEffect(() => {
+                // Wait for firebase to init if module is slow
+                const initInterval = setInterval(() => {
+                    if (window.firebaseRefs) {
+                        clearInterval(initInterval);
+                        initializeFirebase();
+                    }
+                }, 100);
+                
+                return () => clearInterval(initInterval);
+            }, []);
+
+            const initializeFirebase = () => {
+                const { auth, signInAnonymously, onAuthStateChanged } = window.firebaseRefs;
+
+                // Guard against auth not being ready
+                if (!auth) {
+                    console.error("Firebase Auth not initialized");
+                    return;
+                }
+
+                const unsubscribe = onAuthStateChanged(auth, (u) => {
+                    if (u) {
+                        setUser(u);
+                        setStatus("Cloud Connected");
+                        setupListeners();
+                    } else {
+                        signInAnonymously(auth).catch((error) => {
+                            console.error("Auth Failed", error);
+                            setStatus("Auth Error");
+                        });
+                    }
+                });
+            };
+
+            const setupListeners = () => {
+                const { db, firebaseRefs } = window;
+                if (!db || !firebaseRefs) return;
+
+                const { ref, onValue } = firebaseRefs;
+                
+                // Listen to Flash State
+                const flashRef = ref(db, 'cctv/flash');
+                onValue(flashRef, (snapshot) => {
+                    setIsFlashOn(!!snapshot.val());
+                });
+            };
+
+            const toggleFlash = () => {
+                const { db, firebaseRefs } = window;
+                const { ref, set } = firebaseRefs;
+                set(ref(db, 'cctv/flash'), !isFlashOn);
+            };
+
+            const handleIpChange = (e) => {
+                const ip = e.target.value;
+                setCamIP(ip);
+                localStorage.setItem('camIP', ip);
+            };
+
+            const startStream = () => {
+                if(!camIP) return alert("Please enter IP Address");
+                // Construct stream URL
+                setStreamUrl(`http://${camIP}:80/stream`);
+            };
+
+            if (!user) {
+                return (
+                    <div className="h-screen flex items-center justify-center flex-col gap-4">
+                        <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-blue-500"></div>
+                        <p className="text-gray-400 text-sm">{status}</p>
+                    </div>
+                );
+            }
+
+            return (
+                <div className="min-h-screen max-w-md mx-auto bg-gray-800 shadow-2xl overflow-hidden md:max-w-2xl">
+                    {/* Header */}
+                    <div className="bg-blue-600 p-4 flex justify-between items-center shadow-lg">
+                        <div className="flex items-center gap-3">
+                            <i className="fa-solid fa-video text-2xl"></i>
+                            <h1 className="text-xl font-bold">ESP32 Secure View</h1>
+                        </div>
+                        <div className="flex items-center gap-2">
+                            <span className="w-2 h-2 bg-green-400 rounded-full animate-pulse"></span>
+                            <span className="text-xs font-mono opacity-80">{status}</span>
+                        </div>
+                    </div>
+
+                    {/* Video Viewport */}
+                    <div className="relative bg-black aspect-video flex items-center justify-center overflow-hidden group">
+                        {streamUrl ? (
+                            <img 
+                                src={streamUrl} 
+                                className="w-full h-full object-cover"
+                                onError={(e) => {
+                                    // Don't hide completely, just show warning, so user can retry
+                                    console.log("Stream error - likely mixed content or offline");
+                                }}
+                            />
+                        ) : (
+                            <div className="text-gray-500 flex flex-col items-center">
+                                <i className="fa-solid fa-eye-slash text-4xl mb-2"></i>
+                                <p>Stream Offline</p>
+                            </div>
+                        )}
+                        
+                        {/* Overlay Controls */}
+                        <div className="absolute top-4 right-4 flex gap-2">
+                            <div className="bg-black/50 backdrop-blur px-2 py-1 rounded text-xs border border-white/20">
+                                LIVE
+                            </div>
+                        </div>
+                    </div>
+
+                    {/* Controls Config */}
+                    <div className="p-6 space-y-6">
+                        
+                        {/* Connection Card */}
+                        <div className="bg-gray-700/50 p-4 rounded-xl border border-gray-600">
+                            <label className="text-xs text-gray-400 uppercase font-bold tracking-wider mb-2 block">
+                                Camera Connection
+                            </label>
+                            <div className="flex gap-2">
+                                <input 
+                                    type="text" 
+                                    value={camIP}
+                                    onChange={handleIpChange}
+                                    placeholder="e.g. 192.168.1.50"
+                                    className="flex-1 bg-gray-800 border-gray-600 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none"
+                                />
+                                <button 
+                                    onClick={startStream}
+                                    className="bg-blue-500 hover:bg-blue-600 px-4 py-2 rounded-lg text-sm font-semibold transition-colors"
+                                >
+                                    Connect
+                                </button>
+                            </div>
+                            <p className="text-[10px] text-gray-400 mt-2">
+                                * Find IP in Arduino Serial Monitor. For remote access, use Port Forwarding or Ngrok.
+                            </p>
+                        </div>
+
+                        {/* Hardware Controls */}
+                        <div className="grid grid-cols-2 gap-4">
+                            <button 
+                                onClick={toggleFlash}
+                                className={`p-4 rounded-xl flex flex-col items-center justify-center gap-2 transition-all duration-200 border ${
+                                    isFlashOn 
+                                    ? 'bg-yellow-500/20 border-yellow-500 text-yellow-500' 
+                                    : 'bg-gray-700 border-gray-600 text-gray-400 hover:bg-gray-600'
+                                }`}
+                            >
+                                <i className={`fa-solid fa-lightbulb text-2xl ${isFlashOn ? 'animate-pulse' : ''}`}></i>
+                                <span className="font-medium">Flashlight</span>
+                            </button>
+
+                            <button 
+                                className="p-4 rounded-xl flex flex-col items-center justify-center gap-2 bg-gray-700 border border-gray-600 text-gray-400 cursor-not-allowed opacity-50"
+                            >
+                                <i className="fa-solid fa-record-vinyl text-2xl"></i>
+                                <span className="font-medium">Record (Pro)</span>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            );
+        }
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
