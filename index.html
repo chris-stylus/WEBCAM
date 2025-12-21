@@ -74,6 +74,14 @@
         <!-- Flash Effect Overlay -->
         <div id="flashOverlay" class="flash-overlay"></div>
 
+        <!-- Toast Notification -->
+        <div id="toast" class="absolute top-24 left-1/2 -translate-x-1/2 bg-white/10 backdrop-blur-md border border-white/20 text-white px-6 py-2 rounded-full opacity-0 transition-opacity duration-300 pointer-events-none z-50 shadow-xl font-medium text-sm flex items-center gap-2">
+            <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 text-green-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
+            </svg>
+            <span>Saved to Gallery</span>
+        </div>
+
         <!-- TOP BAR -->
         <div class="absolute top-0 left-0 right-0 h-16 bg-gradient-to-b from-black/60 to-transparent z-20 flex justify-between items-center px-6">
             <button class="p-2 rounded-full bg-black/20 backdrop-blur-md text-white/90 hover:bg-black/40" onclick="toggleSettings()">
@@ -91,8 +99,8 @@
         <!-- VIEWFINDER -->
         <div class="flex-1 relative bg-neutral-800 overflow-hidden flex items-center justify-center">
             <p id="loadingText" class="absolute text-neutral-500 text-sm animate-pulse">Connecting to stream...</p>
-            <!-- The Stream Image -->
-            <img id="camStream" class="w-full h-full object-cover" alt="stream" onerror="handleStreamError()">
+            <!-- The Stream Image - Now clickable to capture -->
+            <img id="camStream" class="w-full h-full object-cover" alt="stream" onerror="handleStreamError()" onclick="takePhoto()">
             
             <!-- Focus Reticle (Decoration) -->
             <div class="absolute w-24 h-24 border border-white/30 opacity-50 pointer-events-none flex flex-col justify-between">
@@ -105,7 +113,7 @@
         <div class="h-32 bg-black/80 backdrop-blur-xl z-20 flex items-center justify-around pb-4">
             
             <!-- Gallery / Last Photo -->
-            <div class="w-12 h-12 bg-neutral-800 rounded-full overflow-hidden border border-neutral-600 relative cursor-pointer active:scale-95 transition-transform" onclick="alert('Images are downloaded to your device gallery!')">
+            <div class="w-12 h-12 bg-neutral-800 rounded-full overflow-hidden border border-neutral-600 relative cursor-pointer active:scale-95 transition-transform" onclick="downloadLastPhoto()">
                 <img id="lastPhoto" class="w-full h-full object-cover opacity-60" src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23666' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='3' y='3' width='18' height='18' rx='2' ry='2'/%3E%3Ccircle cx='8.5' cy='8.5' r='1.5'/%3E%3Cpolyline points='21 15 16 10 5 21'/%3E%3C/svg%3E">
             </div>
 
@@ -171,7 +179,6 @@
             document.getElementById('appInterface').classList.remove('opacity-0');
             
             // Start Stream
-            const streamUrl = `http://${cameraIP}:81/stream`; // Usually port 81 or 80 depending on code. My code uses 80.
             // Let's try standard port 80 first based on my sketch
             document.getElementById('camStream').src = `http://${cameraIP}/stream`;
 
@@ -197,8 +204,12 @@
                 const imageUrl = URL.createObjectURL(blob);
                 
                 // Update Thumbnail
-                document.getElementById('lastPhoto').src = imageUrl;
-                document.getElementById('lastPhoto').classList.remove('opacity-60');
+                const lastPhoto = document.getElementById('lastPhoto');
+                lastPhoto.src = imageUrl;
+                lastPhoto.classList.remove('opacity-60');
+
+                // Visual Confirmation
+                showToast("Saved to Device");
 
                 // Force Download
                 const link = document.createElement('a');
@@ -210,8 +221,36 @@
                 
             } catch (error) {
                 console.error("Capture Error:", error);
-                alert("Could not capture image. Is the ESP32 connected?");
+                showToast("Failed to Save");
             }
+        }
+
+        function downloadLastPhoto() {
+            const img = document.getElementById('lastPhoto');
+            if(img.src.includes('data:image/svg')) {
+                // If it's the placeholder SVG, do nothing or alert
+                showToast("No photo yet!");
+                return;
+            }
+            
+            // Create download link
+            const link = document.createElement('a');
+            link.href = img.src;
+            link.download = `ESP32_Redownload_${new Date().getTime()}.jpg`;
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+            showToast("Saved to Device");
+        }
+
+        function showToast(msg) {
+            const t = document.getElementById('toast');
+            t.querySelector('span').innerText = msg;
+            t.classList.remove('opacity-0');
+            // Hide after 2 seconds
+            setTimeout(() => {
+                t.classList.add('opacity-0');
+            }, 2000);
         }
 
         function triggerFlash() {
