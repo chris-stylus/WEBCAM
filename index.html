@@ -2,292 +2,268 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>ESP32 Point & Shoot</title>
-    
-    <!-- React & Tailwind -->
-    <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
-    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
-    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>ESP32 Cam</title>
     <script src="https://cdn.tailwindcss.com"></script>
-    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
-    
-    <!-- Firebase SDKs -->
-    <script type="module">
-        import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
-        import { getDatabase, ref, set, onValue } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-database.js";
-        import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-auth.js";
-
-        // --- YOUR CREDENTIALS ---
-        const firebaseConfig = {
-            apiKey: "AIzaSyCx6BCyKA9FQ6cprrarImZKf9wHFBkJ7qs",
-            authDomain: "web-cam-8ea0e.firebaseapp.com",
-            databaseURL: "https://web-cam-8ea0e-default-rtdb.firebaseio.com",
-            projectId: "web-cam-8ea0e",
-            storageBucket: "web-cam-8ea0e.firebasestorage.app",
-            messagingSenderId: "791818890690",
-            appId: "1:791818890690:web:ce2bf048d6fcd721377a5b",
-            measurementId: "G-W0YVZ7YDVY"
-        };
-
-        const app = initializeApp(firebaseConfig);
-        const auth = getAuth(app);
-        const db = getDatabase(app);
+    <style>
+        body { background-color: #000; overflow: hidden; touch-action: none; }
         
-        // Expose to window for React
-        window.db = db;
-        window.auth = auth;
-        window.firebaseRefs = { auth, ref, set, onValue, signInAnonymously, onAuthStateChanged };
-    </script>
+        /* Shutter Button Animation */
+        .shutter-btn {
+            transition: all 0.1s;
+        }
+        .shutter-btn:active, .shutter-active {
+            transform: scale(0.9);
+            background-color: #ccc;
+        }
+
+        /* Flash Animation */
+        @keyframes flashAnim {
+            0% { opacity: 1; }
+            100% { opacity: 0; }
+        }
+        .flash-overlay {
+            position: absolute;
+            inset: 0;
+            background: white;
+            pointer-events: none;
+            opacity: 0;
+            z-index: 50;
+        }
+        .flash-trigger {
+            animation: flashAnim 0.3s ease-out;
+        }
+
+        /* Settings Panel Transition */
+        .settings-panel {
+            transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+        .settings-hidden {
+            transform: translateY(100%);
+        }
+    </style>
 </head>
-<body class="bg-gray-900 text-white font-sans">
-    <div id="root"></div>
+<body class="h-screen w-screen flex flex-col font-sans text-white">
 
-    <script type="text/babel">
-        const { useState, useEffect } = React;
-
-        function App() {
-            const [user, setUser] = useState(null);
-            const [camIP, setCamIP] = useState(localStorage.getItem('camIP') || '');
-            const [isFlashOn, setIsFlashOn] = useState(false);
-            const [status, setStatus] = useState("Connecting to cloud...");
-            const [streamUrl, setStreamUrl] = useState("");
+    <!-- CONNECTION SCREEN -->
+    <div id="connectScreen" class="absolute inset-0 z-50 bg-neutral-900 flex flex-col items-center justify-center p-6 transition-opacity duration-500">
+        <div class="w-full max-w-sm space-y-6 text-center">
+            <div class="w-20 h-20 bg-neutral-800 rounded-2xl mx-auto flex items-center justify-center mb-4 border border-neutral-700 shadow-xl">
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-10 w-10 text-blue-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z" />
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 13a3 3 0 11-6 0 3 3 0 016 0z" />
+                </svg>
+            </div>
+            <h1 class="text-2xl font-bold tracking-tight">Connect Camera</h1>
+            <p class="text-neutral-400 text-sm">Enter the IP address printed in your Arduino Serial Monitor.</p>
             
-            // Capture States
-            const [isCapturing, setIsCapturing] = useState(false);
-            const [capturedImage, setCapturedImage] = useState(null);
+            <div class="relative">
+                <input type="text" id="ipInput" placeholder="192.168.1.XXX" 
+                    class="w-full bg-neutral-800 border border-neutral-700 rounded-xl px-4 py-3 text-white focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition-all placeholder-neutral-500 text-center font-mono">
+            </div>
 
-            useEffect(() => {
-                const initInterval = setInterval(() => {
-                    if (window.firebaseRefs) {
-                        clearInterval(initInterval);
-                        initializeFirebase();
-                    }
-                }, 100);
-                return () => clearInterval(initInterval);
-            }, []);
+            <button onclick="connectToCamera()" class="w-full bg-blue-600 hover:bg-blue-500 active:bg-blue-700 text-white font-medium py-3 rounded-xl transition-colors shadow-lg shadow-blue-900/20">
+                Start Viewfinder
+            </button>
+        </div>
+    </div>
 
-            const initializeFirebase = () => {
-                const { auth, signInAnonymously, onAuthStateChanged } = window.firebaseRefs;
+    <!-- MAIN APP INTERFACE -->
+    <div id="appInterface" class="relative w-full h-full flex flex-col opacity-0 transition-opacity duration-500">
+        
+        <!-- Flash Effect Overlay -->
+        <div id="flashOverlay" class="flash-overlay"></div>
 
-                if (!auth) return;
+        <!-- TOP BAR -->
+        <div class="absolute top-0 left-0 right-0 h-16 bg-gradient-to-b from-black/60 to-transparent z-20 flex justify-between items-center px-6">
+            <button class="p-2 rounded-full bg-black/20 backdrop-blur-md text-white/90 hover:bg-black/40" onclick="toggleSettings()">
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                </svg>
+            </button>
+            <div class="px-3 py-1 bg-black/30 backdrop-blur-md rounded-full border border-white/10">
+                <span class="text-xs font-medium tracking-wider text-yellow-400">RAW</span>
+            </div>
+            <div class="w-10"></div> <!-- Spacer -->
+        </div>
 
-                const unsubscribe = onAuthStateChanged(auth, (u) => {
-                    if (u) {
-                        setUser(u);
-                        setStatus("Cloud Connected");
-                        setupListeners();
-                    } else {
-                        signInAnonymously(auth).catch((error) => {
-                            console.error("Auth Failed", error);
-                            setStatus("Auth Error");
-                        });
-                    }
-                });
-            };
+        <!-- VIEWFINDER -->
+        <div class="flex-1 relative bg-neutral-800 overflow-hidden flex items-center justify-center">
+            <p id="loadingText" class="absolute text-neutral-500 text-sm animate-pulse">Connecting to stream...</p>
+            <!-- The Stream Image -->
+            <img id="camStream" class="w-full h-full object-cover" alt="stream" onerror="handleStreamError()">
+            
+            <!-- Focus Reticle (Decoration) -->
+            <div class="absolute w-24 h-24 border border-white/30 opacity-50 pointer-events-none flex flex-col justify-between">
+                <div class="w-full flex justify-between"><div class="w-2 h-2 border-t border-l border-white"></div><div class="w-2 h-2 border-t border-r border-white"></div></div>
+                <div class="w-full flex justify-between"><div class="w-2 h-2 border-b border-l border-white"></div><div class="w-2 h-2 border-b border-r border-white"></div></div>
+            </div>
+        </div>
 
-            const setupListeners = () => {
-                const { db, firebaseRefs } = window;
-                if (!db || !firebaseRefs) return;
+        <!-- BOTTOM CONTROLS -->
+        <div class="h-32 bg-black/80 backdrop-blur-xl z-20 flex items-center justify-around pb-4">
+            
+            <!-- Gallery / Last Photo -->
+            <div class="w-12 h-12 bg-neutral-800 rounded-full overflow-hidden border border-neutral-600 relative cursor-pointer active:scale-95 transition-transform" onclick="alert('Images are downloaded to your device gallery!')">
+                <img id="lastPhoto" class="w-full h-full object-cover opacity-60" src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23666' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='3' y='3' width='18' height='18' rx='2' ry='2'/%3E%3Ccircle cx='8.5' cy='8.5' r='1.5'/%3E%3Cpolyline points='21 15 16 10 5 21'/%3E%3C/svg%3E">
+            </div>
 
-                const { ref, onValue } = firebaseRefs;
-                const flashRef = ref(db, 'cctv/flash');
-                onValue(flashRef, (snapshot) => {
-                    setIsFlashOn(!!snapshot.val());
-                });
-            };
+            <!-- Shutter Button -->
+            <button id="shutterBtn" onclick="takePhoto()" class="shutter-btn w-20 h-20 rounded-full border-4 border-white flex items-center justify-center bg-transparent">
+                <div class="w-16 h-16 bg-white rounded-full transition-all"></div>
+            </button>
 
-            const toggleFlash = () => {
-                const { db, firebaseRefs } = window;
-                const { ref, set } = firebaseRefs;
-                set(ref(db, 'cctv/flash'), !isFlashOn);
-            };
+            <!-- Switch Mode (Decoration) -->
+            <button class="w-12 h-12 rounded-full bg-neutral-800/50 flex items-center justify-center text-white/70 active:scale-95 transition-transform" onclick="location.reload()">
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                </svg>
+            </button>
+        </div>
+    </div>
 
-            const handleIpChange = (e) => {
-                const ip = e.target.value;
-                setCamIP(ip);
-                localStorage.setItem('camIP', ip);
-            };
+    <!-- SETTINGS MODAL -->
+    <div id="settingsPanel" class="absolute bottom-0 left-0 right-0 bg-neutral-900 rounded-t-3xl p-6 z-50 settings-panel settings-hidden border-t border-neutral-700 shadow-2xl">
+        <div class="w-10 h-1 bg-neutral-700 rounded-full mx-auto mb-6"></div>
+        <h2 class="text-lg font-semibold mb-4 text-white">Camera Settings</h2>
+        
+        <div class="space-y-4">
+            <div class="flex items-center justify-between p-3 bg-neutral-800 rounded-xl">
+                <span class="text-neutral-300">Sync with Hardware Button</span>
+                <div class="relative inline-block w-12 mr-2 align-middle select-none transition duration-200 ease-in">
+                    <input type="checkbox" checked disabled class="toggle-checkbox absolute block w-6 h-6 rounded-full bg-white border-4 appearance-none cursor-pointer border-blue-600 right-0"/>
+                    <label class="toggle-label block overflow-hidden h-6 rounded-full bg-blue-600 cursor-pointer"></label>
+                </div>
+            </div>
+            
+            <button onclick="disconnect()" class="w-full py-3 bg-red-500/10 text-red-400 font-medium rounded-xl hover:bg-red-500/20 transition-colors">
+                Disconnect Camera
+            </button>
+            
+            <button onclick="toggleSettings()" class="w-full py-3 bg-neutral-800 text-neutral-400 font-medium rounded-xl hover:bg-neutral-700 transition-colors">
+                Close
+            </button>
+        </div>
+    </div>
 
-            const startStream = () => {
-                if(!camIP) return alert("Please enter IP Address");
-                setStreamUrl(`http://${camIP}:80/stream`);
-            };
+    <script>
+        let cameraIP = '';
+        let pollingInterval = null;
 
-            // --- UPDATED: ROBUST CAPTURE LOGIC ---
-            // Uses standard Image loading instead of fetch to bypass some browser security restrictions
-            const handleCapture = () => {
-                if (!camIP) return alert("Connect to camera first");
-                setIsCapturing(true);
+        // Load saved IP
+        const savedIP = localStorage.getItem('esp32_ip');
+        if(savedIP) document.getElementById('ipInput').value = savedIP;
 
-                // Create a temporary image object
-                const img = new Image();
-                // Add timestamp to prevent browser caching the old image
-                const captureUrl = `http://${camIP}/capture?t=${Date.now()}`;
+        function connectToCamera() {
+            const ip = document.getElementById('ipInput').value.trim();
+            if(!ip) {
+                alert("Please enter an IP Address");
+                return;
+            }
+            
+            // Format IP logic (remove http:// if user added it)
+            cameraIP = ip.replace('http://', '').replace('/', '');
+            localStorage.setItem('esp32_ip', cameraIP);
+
+            // Update UI
+            document.getElementById('connectScreen').classList.add('opacity-0', 'pointer-events-none');
+            document.getElementById('appInterface').classList.remove('opacity-0');
+            
+            // Start Stream
+            const streamUrl = `http://${cameraIP}:81/stream`; // Usually port 81 or 80 depending on code. My code uses 80.
+            // Let's try standard port 80 first based on my sketch
+            document.getElementById('camStream').src = `http://${cameraIP}/stream`;
+
+            // Start polling for hardware button press
+            startHardwarePolling();
+        }
+
+        function handleStreamError() {
+            document.getElementById('loadingText').innerText = "Stream Error. Check IP.";
+            document.getElementById('loadingText').classList.add('text-red-500');
+        }
+
+        async function takePhoto() {
+            // Visual feedback
+            triggerFlash();
+
+            // Fetch high res image
+            try {
+                const response = await fetch(`http://${cameraIP}/capture`);
+                if (!response.ok) throw new Error('Capture failed');
                 
-                img.crossOrigin = "Anonymous"; // Requests access to the image data
-                img.src = captureUrl;
+                const blob = await response.blob();
+                const imageUrl = URL.createObjectURL(blob);
+                
+                // Update Thumbnail
+                document.getElementById('lastPhoto').src = imageUrl;
+                document.getElementById('lastPhoto').classList.remove('opacity-60');
 
-                img.onload = () => {
-                    // Draw the loaded image to a hidden canvas
-                    // This creates a clean base64 string we can display and download
-                    const canvas = document.createElement('canvas');
-                    canvas.width = img.width;
-                    canvas.height = img.height;
-                    const ctx = canvas.getContext('2d');
-                    ctx.drawImage(img, 0, 0);
-
-                    try {
-                        const dataUrl = canvas.toDataURL('image/jpeg');
-                        setCapturedImage(dataUrl);
-                    } catch (e) {
-                        // Fallback if CORS headers are missing on ESP32
-                        console.warn("Canvas tainted, using direct URL");
-                        setCapturedImage(captureUrl);
-                    }
-                    setIsCapturing(false);
-                };
-
-                img.onerror = (e) => {
-                    console.error("Image load error", e);
-                    alert("Capture Failed!\n\nIf the Stream is working but Capture fails:\n1. Check if 'Insecure Content' is allowed in site settings.\n2. Ensure the ESP32 code was uploaded with the latest version.");
-                    setIsCapturing(false);
-                };
-            };
-
-            const downloadImage = () => {
+                // Force Download
                 const link = document.createElement('a');
-                link.href = capturedImage;
-                link.download = `esp32-snap-${Date.now()}.jpg`;
+                link.href = imageUrl;
+                link.download = `ESP32_Capture_${new Date().getTime()}.jpg`;
                 document.body.appendChild(link);
                 link.click();
                 document.body.removeChild(link);
-            };
-
-            if (!user) {
-                return (
-                    <div className="h-screen flex items-center justify-center flex-col gap-4">
-                        <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-blue-500"></div>
-                        <p className="text-gray-400 text-sm">{status}</p>
-                    </div>
-                );
+                
+            } catch (error) {
+                console.error("Capture Error:", error);
+                alert("Could not capture image. Is the ESP32 connected?");
             }
-
-            return (
-                <div className="min-h-screen max-w-md mx-auto bg-gray-800 shadow-2xl overflow-hidden md:max-w-2xl relative">
-                    {/* Header */}
-                    <div className="bg-blue-600 p-4 flex justify-between items-center shadow-lg z-10 relative">
-                        <div className="flex items-center gap-3">
-                            <i className="fa-solid fa-camera text-2xl"></i>
-                            <h1 className="text-xl font-bold">Point & Shoot</h1>
-                        </div>
-                        <div className="flex items-center gap-2">
-                            <span className="w-2 h-2 bg-green-400 rounded-full animate-pulse"></span>
-                            <span className="text-xs font-mono opacity-80">{status}</span>
-                        </div>
-                    </div>
-
-                    {/* Viewfinder */}
-                    <div className="relative bg-black aspect-[4/3] flex items-center justify-center overflow-hidden group">
-                        {streamUrl ? (
-                            <img 
-                                src={streamUrl} 
-                                className="w-full h-full object-cover"
-                                onError={(e) => console.log("Stream offline")}
-                            />
-                        ) : (
-                            <div className="text-gray-500 flex flex-col items-center">
-                                <i className="fa-solid fa-eye-slash text-4xl mb-2"></i>
-                                <p>Stream Offline</p>
-                            </div>
-                        )}
-                        
-                        {/* Flash Effect Overlay */}
-                        {isCapturing && (
-                            <div className="absolute inset-0 bg-white animate-pulse z-20 opacity-90"></div>
-                        )}
-                    </div>
-
-                    {/* Controls */}
-                    <div className="p-6 space-y-6 pb-24">
-                        
-                        {/* Connection Bar */}
-                        <div className="bg-gray-700/50 p-4 rounded-xl border border-gray-600">
-                            <div className="flex gap-2">
-                                <input 
-                                    type="text" 
-                                    value={camIP}
-                                    onChange={handleIpChange}
-                                    placeholder="Camera IP (e.g. 192.168.1.50)"
-                                    className="flex-1 bg-gray-800 border-gray-600 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none"
-                                />
-                                <button onClick={startStream} className="bg-blue-500 text-white px-4 rounded-lg">
-                                    <i className="fa-solid fa-link"></i>
-                                </button>
-                            </div>
-                        </div>
-
-                        {/* Big Buttons */}
-                        <div className="grid grid-cols-2 gap-4">
-                            <button 
-                                onClick={toggleFlash}
-                                className={`p-4 rounded-xl flex flex-col items-center gap-2 border ${
-                                    isFlashOn 
-                                    ? 'bg-yellow-500/20 border-yellow-500 text-yellow-500' 
-                                    : 'bg-gray-700 border-gray-600 text-gray-400'
-                                }`}
-                            >
-                                <i className="fa-solid fa-bolt text-2xl"></i>
-                                <span className="font-medium">Torch</span>
-                            </button>
-
-                            <button 
-                                onClick={handleCapture}
-                                disabled={isCapturing}
-                                className="p-4 rounded-xl flex flex-col items-center gap-2 bg-white text-gray-900 border border-white hover:bg-gray-200 transition-colors active:scale-95"
-                            >
-                                <i className="fa-solid fa-camera-retro text-2xl"></i>
-                                <span className="font-bold">{isCapturing ? '...' : 'CAPTURE'}</span>
-                            </button>
-                        </div>
-                    </div>
-
-                    {/* Photo Preview Modal */}
-                    {capturedImage && (
-                        <div className="fixed inset-0 z-50 bg-black/90 flex items-center justify-center p-4 backdrop-blur-sm">
-                            <div className="bg-gray-800 rounded-2xl max-w-lg w-full overflow-hidden shadow-2xl border border-gray-700">
-                                <div className="p-4 border-b border-gray-700 flex justify-between items-center">
-                                    <h3 className="font-bold">Captured Photo</h3>
-                                    <button onClick={() => setCapturedImage(null)} className="text-gray-400 hover:text-white">
-                                        <i className="fa-solid fa-xmark text-xl"></i>
-                                    </button>
-                                </div>
-                                <div className="aspect-[4/3] bg-black">
-                                    <img src={capturedImage} className="w-full h-full object-contain" />
-                                </div>
-                                <div className="p-4 flex gap-3">
-                                    <button 
-                                        onClick={downloadImage}
-                                        className="flex-1 bg-blue-600 hover:bg-blue-700 text-white py-3 rounded-xl font-bold flex items-center justify-center gap-2"
-                                    >
-                                        <i className="fa-solid fa-download"></i> Download
-                                    </button>
-                                    <button 
-                                        onClick={() => setCapturedImage(null)}
-                                        className="px-4 py-3 rounded-xl border border-gray-600 text-gray-300 hover:bg-gray-700"
-                                    >
-                                        Close
-                                    </button>
-                                </div>
-                            </div>
-                        </div>
-                    )}
-                </div>
-            );
         }
 
-        const root = ReactDOM.createRoot(document.getElementById('root'));
-        root.render(<App />);
+        function triggerFlash() {
+            const overlay = document.getElementById('flashOverlay');
+            overlay.classList.remove('flash-trigger');
+            void overlay.offsetWidth; // trigger reflow
+            overlay.classList.add('flash-trigger');
+            
+            // Animate button
+            const btn = document.getElementById('shutterBtn');
+            btn.classList.add('shutter-active');
+            setTimeout(() => btn.classList.remove('shutter-active'), 100);
+        }
+
+        // Polls the ESP32 every 200ms to see if physical button was pressed
+        function startHardwarePolling() {
+            if(pollingInterval) clearInterval(pollingInterval);
+            
+            pollingInterval = setInterval(async () => {
+                try {
+                    // Timeout is crucial here to not lag the stream
+                    const controller = new AbortController();
+                    const timeoutId = setTimeout(() => controller.abort(), 150);
+                    
+                    const response = await fetch(`http://${cameraIP}/status`, { 
+                        signal: controller.signal 
+                    });
+                    
+                    const data = await response.json();
+                    
+                    if(data.pressed) {
+                        console.log("Physical Button Pressed!");
+                        takePhoto();
+                    }
+                } catch (e) {
+                    // Ignore timeout errors, just polling
+                }
+            }, 500); // Check twice a second
+        }
+
+        function toggleSettings() {
+            const panel = document.getElementById('settingsPanel');
+            panel.classList.toggle('settings-hidden');
+        }
+
+        function disconnect() {
+            clearInterval(pollingInterval);
+            document.getElementById('appInterface').classList.add('opacity-0');
+            document.getElementById('connectScreen').classList.remove('opacity-0', 'pointer-events-none');
+            document.getElementById('camStream').src = "";
+            toggleSettings();
+        }
     </script>
 </body>
 </html>
